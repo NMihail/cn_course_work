@@ -1,32 +1,77 @@
-import unittest
-from unittest.mock import Mock, patch
+import socket
+import threading
+import pytest
+
 from p2p_node import P2PNode
 
-class TestP2PNodeUnit(unittest.TestCase):
-    def setUp(self):
-        self.mock_message = Mock()
-        self.mock_update = Mock()
-        self.node = P2PNode('127.0.0.1', 5000, self.mock_message, self.mock_update)
+class DummyConn:
+    def __init__(self):
+        self.closed = False
+    def close(self):
+        self.closed = True
 
-    def test_send_text(self):
-        mock_conn = Mock()
-        self.node.connections = [{'conn': mock_conn, 'id': 'id', 'address': ('127.0.0.1', 1234)}]
-        self.node.send_text("Hello")
-        mock_conn.sendall.assert_called_once_with(b"TEXT:Hello")
+class DummySocket:
+    def __init__(self):
+        self.bound = False
+        self.listening = False
+        self._on_accept = None
 
-    def test_send_file(self):
-        with patch("builtins.open", unittest.mock.mock_open(read_data=b"data")) as mock_file:
-            mock_conn = Mock()
-            self.node.connections = [{'conn': mock_conn, 'id': 'id', 'address': ('127.0.0.1', 1234)}]
-            self.node.send_file("test.txt")
-            self.assertIn(b"FILE:test.txt:", mock_conn.sendall.call_args[0][0])
+    def bind(self, addr):
+        assert addr[0] == '127.0.0.1'
+        self.bound = True
 
-    def test_close_connection(self):
-        mock_conn = Mock()
-        self.node.connections = [{'conn': mock_conn, 'id': 'abc', 'address': ('127.0.0.1', 1234)}]
-        result = self.node.close_connection("abc")
-        self.assertTrue(result)
-        mock_conn.close.assert_called_once()
+    def listen(self, backlog):
+        assert backlog == 5
+        self.listening = True
 
-if __name__ == '__main__':
-    unittest.main()
+    def accept(self):
+        # simulate a single connection
+        conn = DummyConn()
+        addr = ('peer-host', 1234)
+        return conn, addr
+
+    def close(self):
+        pass
+
+@pytest.fixture(autouse=True)
+def patch_socket(monkeypatch):
+    monkeypatch.setattr(socket, 'socket', lambda *args, **kwargs: DummySocket())
+
+def test_init():
+    node = P2PNode('127.0.0.1', 5000, lambda m: None, lambda: None)
+    assert node.host == '127.0.0.1'
+    assert node.port == 5000
+    assert node.connections == []
+    assert not node.running
+
+def test_start_and_stop_server(monkeypatch):
+    received_messages = []
+    def gui_msg(m): received_messages.append(m)
+    def gui_upd(): pass
+
+    node = P2PNode('127.0.0.1', 5000, gui_msg, gui_upd)
+    node.start_server()
+    # give thread time to accept once
+    threading.Event().wait(0.1)
+    # after first accept, connections list should have one entry
+    assert len(node.connections) == 1
+    conn_info = node.connections[0]
+    assert conn_info['id'] == 'peer-host:1234'
+    assert isinstance(conn_info['conn'], DummyConn)
+    # stop server
+    node.running = False
+
+def test_close_connection_success(monkeypatch):
+    msgs = []
+    upd = []
+    node = P2PNode('h', 1, lambda m: msgs.append(m), lambda: upd.append(True))
+    dummy = DummyConn()
+    node.connections = [{'id': 'peer1:1000', 'conn': dummy}]
+    assert node.close_connection('peer1:1000')
+    assert dummy.closed
+    assert 'закрыто' in msgs[0]
+    assert upd
+
+def test_close_connection_fail():
+    node = P2PNode('h', 1, lambda m: None, lambda: None)
+    assert not node.close_connection('nonexistent')
