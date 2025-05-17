@@ -12,18 +12,6 @@ class TestP2PStress(unittest.TestCase):
         self.node.start_server()
         time.sleep(1)
 
-    """def test_many_clients_connect(self):
-        clients = []
-        for i in range(50):  # Можно увеличить до 100+
-            c = P2PNode(f"127.0.0.1", 5011 + i, lambda msg: None, lambda: None)
-            c.start_server()
-            time.sleep(0.05)
-            c.connect_to_peer(self.host, self.port)
-            clients.append(c)
-
-        time.sleep(2)
-        self.assertGreaterEqual(len(self.node.connections), 40)"""
-
     def test_large_file_transfer(self):
         large_data = b"x" * 1_000_000_000  # 1 GB
 
